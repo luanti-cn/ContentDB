@@ -196,3 +196,5 @@ ContentDB/appsettings.Production.json
 frontend/.env*.local
 *.pem
 !deploy_key.pub
+frontend/preview.log
+frontend/api_test.json

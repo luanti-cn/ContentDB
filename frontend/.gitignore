@@ -7,3 +7,8 @@
 *.tsbuildinfo
 next-env.d.ts.timestamp
 .DS_Store
+
+# Cloudflare
+/.open-next
+/.wrangler
+cloudflare-env.d.ts

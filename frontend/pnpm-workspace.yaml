@@ -1,6 +1,9 @@
+nodeLinker: hoisted
 allowBuilds:
+  esbuild: true
   sharp: true
   unrs-resolver: true
+  workerd: true
 minimumReleaseAgeExclude:
   - '@next/env@16.3.5'
   - '@next/eslint-plugin-next@16.3.5'
