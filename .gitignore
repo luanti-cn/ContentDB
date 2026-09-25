@@ -177,3 +177,22 @@ $RECYCLE.BIN/
 
 
 # End of https://www.gitignore.io/api/linux,macos,python,windows
+
+ContentDB/.vs
+ContentDB/ContentDB.*/bin
+ContentDB/ContentDB.*/build
+ContentDB/ContentDB.*/obj
+ContentDB/bin
+ContentDB/build
+ContentDB/obj
+*/bin_ci 2Debug
+*/bin_ci2 2Debug
+ContentDB/*/bin_ci 2Debug
+ContentDB/*/bin_ci2 2Debug
+ContentDB/*/bin_ci3 2Debug
+# LuantiCN 本地配置与凭据(不进仓库)
+ContentDB/appsettings.Development.json
+ContentDB/appsettings.Production.json
+frontend/.env*.local
+*.pem
+!deploy_key.pub

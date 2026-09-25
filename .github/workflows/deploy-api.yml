@@ -1,0 +1,36 @@
+name: deploy-api
+
+# 后端(ContentDB/)变更推送到 main → 自动部署 api.luanti.cn
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ContentDB/**"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            cd /opt/luanticn/contentdb
+            git pull --ff-only
+            cd ContentDB
+            dotnet publish -c Release -o /opt/luanticn/api
+            sudo systemctl restart contentdb
+            sleep 3
+            systemctl is-active --quiet contentdb && echo "contentdb is up"
+            curl -sf http://127.0.0.1:5175/release_info.json > /dev/null && echo "api healthcheck ok"

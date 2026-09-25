@@ -1,0 +1,20 @@
+@ContentDB_HostAddress = http://localhost:5175
+
+### 健康检查
+GET {{ContentDB_HostAddress}}/healthz
+Accept: application/json
+
+### 包列表(懒缓存 + URL 改写)
+GET {{ContentDB_HostAddress}}/api/packages/
+Accept: application/json
+
+### 更新检查(客户端轮询)
+GET {{ContentDB_HostAddress}}/api/updates/?protocol_version=47
+Accept: application/json
+
+### 客户端商店详情
+GET {{ContentDB_HostAddress}}/api/packages/Wuzzy/mineclone2/for-client/?formspec_version=7&protocol_version=47
+Accept: application/json
+
+### 下载(首次同步拉取入 S3,然后 302 到 CDN)
+GET {{ContentDB_HostAddress}}/packages/Wuzzy/mineclone2/releases/1/download/

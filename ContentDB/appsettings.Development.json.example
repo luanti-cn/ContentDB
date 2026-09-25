@@ -1,0 +1,26 @@
+// 开发配置模板:复制为 appsettings.Development.json 并填入你自己的本地值。
+// appsettings.Development.json 已被 .gitignore 忽略,严禁提交真实凭据!
+{
+  "ConnectionStrings": {
+    "AppDb": "Host=localhost;Database=contentdb;Username=contentdb;Password=<你的本地密码>",
+    "MirrorDb": "Host=localhost;Database=contentdb_mirror;Username=contentdb;Password=<你的本地密码>"
+  },
+  "Auth": {
+    "FirstUserIsAdmin": true,
+    "Oidc": {
+      "Enabled": false
+    }
+  },
+  "Vault": {
+    "EncryptionKey": "<openssl rand -base64 32 生成>"
+  },
+  "Storage": {
+    "ServiceUrl": "<S3/COS/R2 的 ServiceUrl>",
+    "Region": "<region>",
+    "AccessKey": "<AccessKey>",
+    "SecretKey": "<SecretKey>",
+    "Bucket": "<桶名>",
+    "ForcePathStyle": true,
+    "ProxyDownloads": true
+  }
+}
