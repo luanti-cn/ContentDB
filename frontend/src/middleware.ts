@@ -31,6 +31,11 @@ export async function middleware(req: NextRequest) {
   }
   resHeaders.set("cache-control", "no-store");
 
+  const location = resHeaders.get("location");
+  if (location?.startsWith("/")) {
+    resHeaders.set("location", new URL(location, req.url).toString());
+  }
+
   return new NextResponse(backend.body, {
     status: backend.status,
     statusText: backend.statusText,
