@@ -23,12 +23,10 @@ const nextConfig = {
       },
       { source: "/uploads/:path*", destination: `${backend}/uploads/:path*` },
       { source: "/thumbnails/:path*", destination: `${backend}/thumbnails/:path*` },
-      // 认证与 OIDC 交互流(后端处理,必须代理否则 /login 会 404)
-      { source: "/login", destination: `${backend}/login` },
-      { source: "/logout", destination: `${backend}/logout` },
-      { source: "/signin-oidc", destination: `${backend}/signin-oidc` },
-      { source: "/signout-callback-oidc", destination: `${backend}/signout-callback-oidc` },
-      { source: "/oauth/:path*", destination: `${backend}/oauth/:path*` },
+      // 认证与 OIDC 交互流(/login /logout /signin-oidc /signout-callback-oidc /oauth)
+      // 由 src/middleware.ts 透传:rewrite 的 fetch 会跟随 302,导致登录页被
+      // 吞进本站渲染、correlation cookie 丢失;middleware 用 redirect:"manual"
+      // 原样返回后端的 302 与 Set-Cookie,让浏览器真正跳转到 OIDC 提供方。
       // feeds / metrics(可选,便于本地直接访问)
       { source: "/feed/:path*", destination: `${backend}/feed/:path*` },
     ];
