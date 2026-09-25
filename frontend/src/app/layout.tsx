@@ -9,12 +9,16 @@ export const metadata: Metadata = {
   description: "Luanti 内容库国内镜像 —— 加速浏览与下载 mod、子游戏与材质包",
 };
 
+const __nameShim =
+  "typeof __name==='undefined'&&(self.__name=function(f,n){try{Object.defineProperty(f,'name',{value:n,configurable:true})}catch{}});";
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="min-h-screen bg-background antialiased" suppressHydrationWarning>
+        <script dangerouslySetInnerHTML={{ __html: __nameShim }} />
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

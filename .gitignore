@@ -198,3 +198,4 @@ frontend/.env*.local
 !deploy_key.pub
 frontend/preview.log
 frontend/api_test.json
+account.html

@@ -171,7 +171,7 @@ curl -sI https://luanti.cn/explore
 |------|------|
 | api 容器反复重启 | `docker compose logs api`:多半是 `.env` 没填好或 COS 密钥错 |
 | 上传 413 | Nginx `client_max_body_size` 不够 |
-| geoip 总返回 AS | 上游 `servers.luanti.net` 不可达(兜底生效,正常降级) |
+| geoip 总返回 AS | 上游 `servers.luanti.org` 不可达(兜底生效,正常降级) |
 | 保管库解密失败 | `VAULT_ENCRYPTION_KEY` 被更换(不可逆,保持一致) |
 | 前端 SSR fetch 失败 | 检查 web 容器 `BACKEND_ORIGIN=http://api:8080`(容器内是 8080 不是 5175) |
 | 磁盘涨 | `docker system prune -f` 清理旧镜像构建层 |

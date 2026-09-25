@@ -7,7 +7,7 @@ public sealed class ServerListOptions
 	public const string SectionName = "ServerList";
 
 	/// <summary>上游官方 master(列表回源 + geoip)。</summary>
-	public string Upstream { get; set; } = "https://servers.luanti.net";
+	public string Upstream { get; set; } = "https://servers.luanti.org";
 
 	/// <summary>上游列表缓存秒数。</summary>
 	public int TtlSeconds { get; set; } = 60;
