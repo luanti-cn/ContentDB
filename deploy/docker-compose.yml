@@ -30,34 +30,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_HTTP_PORTS: 8080
-      ConnectionStrings__AppDb: "Host=db;Database=contentdb;Username=contentdb;Password=${POSTGRES_PASSWORD}"
-      ConnectionStrings__MirrorDb: "Host=db;Database=contentdb_mirror;Username=contentdb;Password=${POSTGRES_PASSWORD}"
-      Vault__EncryptionKey: ${VAULT_ENCRYPTION_KEY:?请在 .env 设置}
-      Storage__ServiceUrl: ${STORAGE_SERVICEURL}
-      Storage__Region: ${STORAGE_REGION}
-      Storage__AccessKey: ${STORAGE_ACCESSKEY}
-      Storage__SecretKey: ${STORAGE_SECRETKEY}
-      Storage__Bucket: ${STORAGE_BUCKET}
+    env_file: .env
     ports:
       # 只暴露给宿主机回环,对外由 Nginx 反代
-      - "127.0.0.1:5175:8080"
-
-  web:
-    build:
-      context: ../frontend
-    restart: unless-stopped
-    depends_on:
-      - api
-    environment:
-      NODE_ENV: production
-      PORT: 3000
-      # Next SSR 与 rewrites 的后端地址(compose 内部网络,端口为容器端口 8080)
-      BACKEND_ORIGIN: http://api:8080
-    ports:
-      - "127.0.0.1:3000:3000"
+      - "0.0.0.0:8080:8080"
 
 volumes:
   pgdata:
