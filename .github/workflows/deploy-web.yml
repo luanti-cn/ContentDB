@@ -1,11 +1,12 @@
 name: deploy-web
 
-# 前端(frontend/)变更推送到 main → 自动部署 luanti.cn
+# 前端(frontend/)变更推送到 main → 自动部署 luanti.cn(Docker)
 on:
   push:
     branches: [main]
     paths:
       - "frontend/**"
+      - "deploy/**"
       - ".github/workflows/deploy-web.yml"
   workflow_dispatch:
 
@@ -26,11 +27,8 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
           script_stop: true
           script: |
-            cd /opt/luanticn/contentdb/frontend
+            cd /opt/luanticn/contentdb
             git pull --ff-only
-            pnpm install --frozen-lockfile
-            pnpm build
-            sudo systemctl restart luanticn-web
-            sleep 3
-            systemctl is-active --quiet luanticn-web && echo "luanticn-web is up"
+            docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build web
+            sleep 5
             curl -sf http://127.0.0.1:3000 > /dev/null && echo "web healthcheck ok"
