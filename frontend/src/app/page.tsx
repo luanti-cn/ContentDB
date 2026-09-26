@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { HomeNoticeDialog } from "@/components/home-notice-dialog";
 import {
   ArrowRight,
   Blocks,
@@ -16,6 +17,7 @@ import {
 export default function HomePage() {
   return (
     <div className="space-y-14">
+      <HomeNoticeDialog />
       {/* Hero */}
       <section className="rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-background p-10 text-center sm:p-16">
         <div className="mx-auto flex max-w-3xl flex-col items-center gap-5">
