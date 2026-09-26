@@ -123,6 +123,7 @@ public static class DependencyInjection
 		// 实时通讯:WS 推送中枢(单例)/ 好友私聊 / 联机房间(打洞信令)
 		services.AddSingleton<Realtime.RealtimeHub>();
 		services.AddSingleton<IRealtimeHub>(sp => sp.GetRequiredService<Realtime.RealtimeHub>());
+		services.AddSingleton<Realtime.WsTicketStore>();
 		services.AddSingleton<MessageRateLimiter>();
 		services.AddSingleton<HostRoomStore>();
 		services.AddScoped<IDirectMessageService, DirectMessageService>();

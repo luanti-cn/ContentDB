@@ -20,7 +20,6 @@ using ContentDB.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-
 namespace ContentDB.Api.Controllers;
 
 [ApiController]
@@ -30,14 +29,26 @@ public sealed class RealtimeController : ApiControllerBase
 
 	private readonly RealtimeHub _hub;
 	private readonly HostRoomStore _rooms;
+	private readonly WsTicketStore _tickets;
 	private readonly IServiceScopeFactory _scopes;
 
 	public RealtimeController(ICurrentUserAccessor currentUser, RealtimeHub hub,
-		HostRoomStore rooms, IServiceScopeFactory scopes) : base(currentUser)
+		HostRoomStore rooms, WsTicketStore tickets, IServiceScopeFactory scopes) : base(currentUser)
 	{
 		_hub = hub;
 		_rooms = rooms;
+		_tickets = tickets;
 		_scopes = scopes;
+	}
+
+	/// <summary>换取 WS 连接票据(60 秒一次性;网页跨域场景用,避免 cookie 随 WS 握手发送的问题)。</summary>
+	[HttpPost("/api/cloud/client/ws-ticket/")]
+	public async Task<IActionResult> WsTicket()
+	{
+		var (user, deviceId, error) = await ResolveUserAsync();
+		if (error is not null) return ApiError(error.Value, "Authentication needed");
+		var ticket = _tickets.Issue(user!.Id, deviceId);
+		return Ok(new { ticket, expiresIn = 60 });
 	}
 
 	[HttpGet("/api/cloud/client/ws/")]
@@ -60,9 +71,23 @@ public sealed class RealtimeController : ApiControllerBase
 		await session.RunAsync();
 	}
 
-	/// <summary>device token 优先,回落网页会话;返回(用户, 设备Id, 错误状态码)。</summary>
+	/// <summary>
+	/// 认证顺序:一次性票据(?ticket=,网页跨域场景)→ device token(Bearer)→ 网页 Cookie 会话。
+	/// 返回(用户, 设备Id, 错误状态码)。
+	/// </summary>
 	private async Task<(User? user, int? deviceId, int? error)> ResolveUserAsync()
 	{
+		// 0) 一次性票据(换取时已认证;此处仅验票取身份)
+		var viaTicket = _tickets.TryTake(Request.Query["ticket"]);
+		if (viaTicket is not null)
+		{
+			using var scope0 = _scopes.CreateScope();
+			var db0 = scope0.ServiceProvider.GetRequiredService<AppDbContext>();
+			var user0 = await db0.Users.FirstOrDefaultAsync(u => u.Id == viaTicket.Value.UserId, HttpContext.RequestAborted);
+			if (user0 is null || !user0.IsActive || user0.IsBanned) return (null, null, 403);
+			return (user0, viaTicket.Value.DeviceId, null);
+		}
+
 		var dev = await HttpContext.AuthenticateAsync(AuthenticationSetup.DeviceTokenScheme);
 		if (dev.Succeeded
 			&& HttpContext.Items[DeviceTokenAuthenticationHandler.DeviceItemKey] is PairedDevice device)
