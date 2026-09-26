@@ -14,6 +14,7 @@ using ContentDB.Core.Domain;
 using ContentDB.Core.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace ContentDB.Api.Controllers;
 
@@ -26,10 +27,11 @@ public sealed class CloudClientController : ApiControllerBase
 	private readonly IFriendService _friends;
 	private readonly IGameServerService _servers;
 	private readonly IPartyService _party;
+	private readonly IHostRoomService _rooms;
 
 	public CloudClientController(ICurrentUserAccessor currentUser, IDevicePairingService pairings,
 		ICloudVaultService vault, IPlayerCharacterService characters, IFriendService friends,
-		IGameServerService servers, IPartyService party)
+		IGameServerService servers, IPartyService party, IHostRoomService rooms)
 		: base(currentUser)
 	{
 		_pairings = pairings;
@@ -38,6 +40,7 @@ public sealed class CloudClientController : ApiControllerBase
 		_friends = friends;
 		_servers = servers;
 		_party = party;
+		_rooms = rooms;
 	}
 
 	/// <summary>校验 Bearer device token;返回(用户, 设备)。</summary>
@@ -261,5 +264,51 @@ public sealed class CloudClientController : ApiControllerBase
 		var (user, _, err) = await RequireDeviceAsync();
 		if (err is not null) return err;
 		return FromResult(await _party.KickAsync(user!, body.Username, HttpContext.RequestAborted));
+	}
+
+	// ---- 联机房间(P2P 打洞 + 中继,信令走 /ws/) ----
+
+	public sealed record HostRegisterBody(string? Status, object? Candidates);
+
+	/// <summary>开服登记:launcher 检测到本地游戏后调用 → { roomId, roomCode }。</summary>
+	[HttpPost("/api/cloud/client/host/register/")]
+	public async Task<IActionResult> HostRegister([FromBody] HostRegisterBody body)
+	{
+		var (user, _, err) = await RequireDeviceAsync();
+		if (err is not null) return err;
+		return FromResult(await _rooms.RegisterAsync(user!, body?.Status,
+			body?.Candidates is null ? null : JsonSerializer.Serialize(body.Candidates), HttpContext.RequestAborted));
+	}
+
+	[HttpPost("/api/cloud/client/host/heartbeat/")]
+	public async Task<IActionResult> HostHeartbeat([FromBody] HostRegisterBody body)
+	{
+		var (user, _, err) = await RequireDeviceAsync();
+		if (err is not null) return err;
+		return FromResult(await _rooms.HeartbeatAsync(user!, body?.Status,
+			body?.Candidates is null ? null : JsonSerializer.Serialize(body.Candidates), HttpContext.RequestAborted));
+	}
+
+	[HttpPost("/api/cloud/client/host/close/")]
+	public async Task<IActionResult> HostClose()
+	{
+		var (user, _, err) = await RequireDeviceAsync();
+		if (err is not null) return err;
+		return FromResult(await _rooms.CloseAsync(user!, HttpContext.RequestAborted));
+	}
+
+	public sealed record HostJoinBody(string? RoomCode, string? Username);
+
+	/// <summary>加入房间:roomCode(房间码)或 username(好友名)二选一;返回 Host 候选。</summary>
+	[HttpPost("/api/cloud/client/host/join/")]
+	public async Task<IActionResult> HostJoin([FromBody] HostJoinBody body)
+	{
+		var (user, _, err) = await RequireDeviceAsync();
+		if (err is not null) return err;
+
+		var result = body?.RoomCode is { Length: > 0 } code
+			? await _rooms.JoinByCodeAsync(user!, code, HttpContext.RequestAborted)
+			: await _rooms.JoinByUserAsync(user!, body?.Username ?? "", HttpContext.RequestAborted);
+		return FromResult(result);
 	}
 }

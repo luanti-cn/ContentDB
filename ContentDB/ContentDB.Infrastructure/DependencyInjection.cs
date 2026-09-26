@@ -6,6 +6,7 @@ using Amazon.S3;
 using ContentDB.Core.Abstractions;
 using ContentDB.Core.Configuration;
 using ContentDB.Infrastructure.Data;
+using ContentDB.Infrastructure.Realtime;
 using ContentDB.Infrastructure.Services;
 using ContentDB.Infrastructure.Storage;
 using ContentDB.Infrastructure.Upstream;
@@ -27,6 +28,7 @@ public static class DependencyInjection
 		services.Configure<SourceSitesOptions>(config.GetSection(SourceSitesOptions.SectionName));
 		services.Configure<VaultOptions>(config.GetSection(VaultOptions.SectionName));
 		services.Configure<ServerListOptions>(config.GetSection(ServerListOptions.SectionName));
+		services.Configure<Core.Configuration.RelayOptions>(config.GetSection(Core.Configuration.RelayOptions.SectionName));
 
 		// EF Core / PostgreSQL
 		// 上游缓存库(MirrorDb)与本地领域库(AppDb)可为同一实例的不同库或同库不同表。
@@ -117,6 +119,24 @@ public static class DependencyInjection
 		services.AddScoped<IFriendService, FriendService>();
 		services.AddScoped<IGameServerService, GameServerService>();
 		services.AddScoped<IPartyService, PartyService>();
+
+		// 实时通讯:WS 推送中枢(单例)/ 好友私聊 / 联机房间(打洞信令)
+		services.AddSingleton<Realtime.RealtimeHub>();
+		services.AddSingleton<IRealtimeHub>(sp => sp.GetRequiredService<Realtime.RealtimeHub>());
+		services.AddSingleton<MessageRateLimiter>();
+		services.AddSingleton<HostRoomStore>();
+		services.AddScoped<IDirectMessageService, DirectMessageService>();
+		services.AddScoped<IHostRoomService, HostRoomService>();
+
+		// 中继客户端(房间 UDP 中继分配;未配置或不可用时降级纯 P2P)
+		var relayOptions = config.GetSection(Core.Configuration.RelayOptions.SectionName)
+			.Get<Core.Configuration.RelayOptions>() ?? new Core.Configuration.RelayOptions();
+		services.AddHttpClient<IRelayClient, RelayHttpClient>(client =>
+		{
+			if (!string.IsNullOrEmpty(relayOptions.BaseUrl))
+				client.BaseAddress = new Uri(relayOptions.BaseUrl);
+			client.Timeout = TimeSpan.FromSeconds(5);
+		});
 
 		return services;
 	}

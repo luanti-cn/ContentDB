@@ -100,7 +100,7 @@ dotnet run --project ContentDB.csproj
 
 ## 云同步:设备配对 + 服务器账号保管库
 
-> Luanti 客户端/启动器接入文档见 [docs/client-api.md](docs/client-api.md);**实现指南(架构/代码/服务器 mod)见 [docs/client-implementation.md](docs/client-implementation.md)**。
+> Luanti 客户端接入文档见 [docs/client-api.md](docs/client-api.md);**实现指南(引擎内联机/社交,架构/代码/服务器 mod)见 [docs/client-implementation.md](docs/client-implementation.md)**。
 
 用户在 luanti.cn 网页绑定设备后,Luanti 客户端(配对设备)可从云端取回/回写各游戏服务器的登录凭证,免去手动输入账号密码。
 
@@ -187,10 +187,23 @@ dotnet run --project ContentDB.csproj
 | 端点(客户端 device token) | 说明 |
 |------|------|
 | `GET /api/cloud/client/servers/` | 游戏内服务器浏览器 |
-| `GET /api/cloud/client/party/` | 轮询房间状态(成员在线 + 目标服,10 秒一次) |
+| `GET /api/cloud/client/party/` | 房间状态(REST 兜底;实时推送走 WS `party.update`) |
 | `POST /api/cloud/client/party/(join|leave|end|server|kick)/` | 同网页端 |
 
 好友上线通知:设备心跳从离线转为在线时,自动给所有 ACCEPTED 好友发 `FRIEND_ONLINE` 通知。
+
+**实时通讯(WebSocket)/ 私聊 / 联机房间(P2P 打洞 + 中继):**
+
+详细协议见 [docs/client-api.md](docs/client-api.md) §10 与 [docs/multiplayer.md](docs/multiplayer.md);
+实现指南(LuantiCN 引擎内)见 [docs/client-implementation.md](docs/client-implementation.md)。
+
+| 端点 | 说明 |
+|------|------|
+| `GET /api/cloud/client/ws/` | WebSocket 长连接(device token 或网页会话):私聊/在线推送/组队变更/P2P 信令 |
+| `GET/POST /api/messages/{username}/`、`/unread/`、`/{username}/read/` | 私聊历史/发送/未读/已读(网页端;客户端前缀 `/api/cloud/client/messages/*`) |
+| `POST /api/cloud/client/host/(register|heartbeat|close|join)/` | 联机房间:开服登记(30s 心跳)/ 关闭 / 好友凭码或用户名加入,返回打洞候选 + 中继信息 |
+| `ContentDB.Relay`(独立进程) | UDP 中继兜底:控制面 `/allocate`(内部密钥)+ 数据面每房间一个端口;部署见其 README |
+
 
 ## 后续阶段(规划)
 

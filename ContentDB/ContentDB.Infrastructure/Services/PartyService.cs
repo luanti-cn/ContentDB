@@ -15,8 +15,13 @@ public sealed class PartyService : IPartyService
 	private const int MaxMembers = 20;
 
 	private readonly AppDbContext _db;
+	private readonly IRealtimeHub _hub;
 
-	public PartyService(AppDbContext db) => _db = db;
+	public PartyService(AppDbContext db, IRealtimeHub hub)
+	{
+		_db = db;
+		_hub = hub;
+	}
 
 	public async Task<ServiceResult> CreateAsync(User actor, string? serverAddress, CancellationToken ct = default)
 	{
@@ -41,7 +46,9 @@ public sealed class PartyService : IPartyService
 		_db.Parties.Add(party);
 		await _db.SaveChangesAsync(ct);
 
-		return ServiceResult.Ok(await BuildStateAsync(party, ct));
+		var state = await BuildStateAsync(party, ct);
+		await PushAsync([actor.Id], state, ct);
+		return ServiceResult.Ok(state);
 	}
 
 	public async Task<ServiceResult> JoinAsync(User actor, string code, CancellationToken ct = default)
@@ -64,7 +71,9 @@ public sealed class PartyService : IPartyService
 		_db.PartyMembers.Add(new PartyMember { PartyId = party.Id, UserId = actor.Id });
 		await _db.SaveChangesAsync(ct);
 
-		return ServiceResult.Ok(await BuildStateAsync(party, ct));
+		var state = await BuildStateAsync(party, ct);
+		await PushAsync(party.Members.Select(m => m.UserId).ToList(), state, ct);
+		return ServiceResult.Ok(state);
 	}
 
 	public async Task<ServiceResult> LeaveAsync(User actor, CancellationToken ct = default)
@@ -72,6 +81,7 @@ public sealed class PartyService : IPartyService
 		var (party, myMember) = await FindMembershipAsync(actor.Id, ct);
 		if (party is null || myMember is null) return ServiceResult.Fail(404, "Not in a party");
 
+		var memberIds = party.Members.Select(m => m.UserId).ToList();
 		if (party.LeaderId == actor.Id)
 		{
 			// 队长退出 => 解散
@@ -84,6 +94,7 @@ public sealed class PartyService : IPartyService
 			_db.PartyMembers.Remove(myMember);
 		}
 		await _db.SaveChangesAsync(ct);
+		await PushAsync(memberIds, null, ct);
 		return ServiceResult.Ok(new { success = true });
 	}
 
@@ -94,10 +105,12 @@ public sealed class PartyService : IPartyService
 			.FirstOrDefaultAsync(p => p.LeaderId == actor.Id && p.Status == PartyStatus.ACTIVE, ct);
 		if (party is null) return ServiceResult.Fail(404, "No active party");
 
+		var memberIds = party.Members.Select(m => m.UserId).ToList();
 		party.Status = PartyStatus.ENDED;
 		party.EndedAt = DateTimeOffset.UtcNow;
 		_db.PartyMembers.RemoveRange(party.Members);
 		await _db.SaveChangesAsync(ct);
+		await PushAsync(memberIds, null, ct);
 		return ServiceResult.Ok(new { success = true });
 	}
 
@@ -111,7 +124,10 @@ public sealed class PartyService : IPartyService
 		if (normalized is null) return ServiceResult.Fail(400, "Invalid server address");
 		party.ServerAddress = normalized;
 		await _db.SaveChangesAsync(ct);
-		return ServiceResult.Ok(await BuildStateAsync(party, ct));
+
+		var state = await BuildStateAsync(party, ct);
+		await PushAsync(party.Members.Select(m => m.UserId).ToList(), state, ct);
+		return ServiceResult.Ok(state);
 	}
 
 	public async Task<ServiceResult> KickAsync(User actor, string username, CancellationToken ct = default)
@@ -125,8 +141,13 @@ public sealed class PartyService : IPartyService
 		if (target is null) return ServiceResult.Fail(404, "Member not found");
 		if (target.UserId == actor.Id) return ServiceResult.Fail(400, "Cannot kick yourself");
 
+		var kickedId = target.UserId;
 		_db.PartyMembers.Remove(target);
 		await _db.SaveChangesAsync(ct);
+
+		await PushAsync([kickedId], null, ct);
+		var state = await BuildStateAsync(party, ct);
+		await PushAsync(party.Members.Select(m => m.UserId).ToList(), state, ct);
 		return ServiceResult.Ok(new { success = true });
 	}
 
@@ -142,6 +163,10 @@ public sealed class PartyService : IPartyService
 	}
 
 	// ---- 内部 ----
+
+	/// <summary>把组队状态变更推给相关用户(在线连接);state=null 表示「已不在房间」。</summary>
+	private Task PushAsync(IReadOnlyCollection<int> userIds, PartyState? state, CancellationToken ct)
+		=> _hub.SendToUsersAsync(userIds, new { type = "party.update", party = state }, ct);
 
 	private Task<int?> FindActivePartyIdAsync(int userId, CancellationToken ct)
 		=> _db.PartyMembers
@@ -180,7 +205,7 @@ public sealed class PartyService : IPartyService
 			})
 			.ToList();
 
-		return new PartyState(party.Id, party.Code, party.Leader.Username, party.ServerAddress, party.CreatedAt, members);
+		return new PartyState(party.Id, party.Code, party.Leader!.Username, party.ServerAddress, party.CreatedAt, members);
 	}
 
 	private async Task<string> GenerateCodeAsync(CancellationToken ct)

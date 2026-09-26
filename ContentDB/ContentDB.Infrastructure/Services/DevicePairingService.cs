@@ -21,12 +21,15 @@ public sealed class DevicePairingService : IDevicePairingService
 
 	private readonly AppDbContext _db;
 	private readonly INotificationService _notifications;
+	private readonly IRealtimeHub _hub;
 	private readonly VaultOptions _options;
 
-	public DevicePairingService(AppDbContext db, INotificationService notifications, IOptions<VaultOptions> options)
+	public DevicePairingService(AppDbContext db, INotificationService notifications,
+		IRealtimeHub hub, IOptions<VaultOptions> options)
 	{
 		_db = db;
 		_notifications = notifications;
+		_hub = hub;
 		_options = options.Value;
 	}
 
@@ -140,22 +143,42 @@ public sealed class DevicePairingService : IDevicePairingService
 	{
 		var wasOnline = device.PresenceUpdatedAt is not null
 			&& DateTimeOffset.UtcNow - device.PresenceUpdatedAt.Value < PresenceLookup.OnlineWindow;
+		var previousAddress = device.CurrentServerAddress;
 
 		device.CurrentServerAddress = ServerAddress.Normalize(address);
 		device.PresenceUpdatedAt = DateTimeOffset.UtcNow;
 		await _db.SaveChangesAsync(ct);
 
-		// 离线 → 上线(开始游戏)时通知好友;持续心跳不会重复通知
-		if (!wasOnline && device.CurrentServerAddress is not null)
+		// 游戏在线状态变更(inGame 事件)实时推给好友:上线下线/换服
+		var wasGameOnline = wasOnline && previousAddress is not null;
+		var isGameOnline = device.CurrentServerAddress is not null;
+		var addressChanged = device.CurrentServerAddress != previousAddress;
+		if (isGameOnline != wasGameOnline || (isGameOnline && addressChanged))
 		{
 			var friendIds = await _db.FriendLinks
 				.Where(l => l.Status == FriendLinkStatus.ACCEPTED
 					&& (l.RequesterId == device.UserId || l.AddresseeId == device.UserId))
 				.Select(l => l.RequesterId == device.UserId ? l.AddresseeId : l.RequesterId)
 				.ToListAsync(ct);
-			foreach (var friendId in friendIds)
-				await _notifications.NotifyAsync(friendId, device.UserId, NotificationType.FRIEND_ONLINE,
-					$"{device.User.Username} 上线了,正在 {device.CurrentServerAddress}", "/friends", ct: ct);
+			if (friendIds.Count > 0)
+			{
+				await _hub.SendToUsersAsync(friendIds, new
+				{
+					type = "presence",
+					username = device.User.Username,
+					online = isGameOnline,
+					inGame = true,
+					address = device.CurrentServerAddress,
+				}, ct);
+			}
+
+			// 离线 → 上线(开始游戏)时仍发站内通知;持续心跳不会重复通知
+			if (!wasGameOnline && isGameOnline)
+			{
+				foreach (var friendId in friendIds)
+					await _notifications.NotifyAsync(friendId, device.UserId, NotificationType.FRIEND_ONLINE,
+						$"{device.User.Username} 上线了,正在 {device.CurrentServerAddress}", "/friends", ct: ct);
+			}
 		}
 	}
 

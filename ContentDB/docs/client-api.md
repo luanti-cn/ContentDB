@@ -1,6 +1,6 @@
 # Luanti 客户端接入 API(云同步)
 
-面向 Luanti 客户端 / 启动器开发者的接入文档。客户端通过**配对设备**获得 device token,之后可:
+面向 LuantiCN 客户端(引擎)开发者的接入文档。客户端通过**配对设备**获得 device token,之后可:
 
 - 进服务器时自动取回/生成该服务器的账号密码(免手动输入)
 - 管理云端角色(人物卡)
@@ -385,3 +385,84 @@ GET /skins/{name}.png
   "同名 media 不可重复添加" 的限制
 - `set_properties` 直接改默认 `character.b3d` 模型的贴图;自定玩家模型的
   游戏需自行适配贴图槽位
+
+---
+
+## 10. 实时通讯 WebSocket(好友私聊 / 在线推送 / 联机信令)
+
+> 总体设计见 [multiplayer.md](multiplayer.md)。
+
+### 10.1 连接
+
+```
+GET wss://luanti.cn/api/cloud/client/ws/
+Authorization: Bearer <device_token>     (或网页 Cookie 会话)
+Upgrade: websocket
+```
+
+- 一个用户可多条连接(网页 + 游戏客户端并存),推送发往全部连接
+- 心跳:客户端每 30s 发 `{"type":"ping"}` → 服务端回 `{"type":"pong"}`;90s 无帧判死
+- 断线重连:指数退避(1s/2s/4s…上限 60s)
+- 连接建立后服务端立即发 `hello`,并向你的好友广播 presence 上线
+
+### 10.2 消息协议(JSON,一帧一对象)
+
+客户端 → 服务端:
+
+| type | 载荷 | 说明 |
+|------|------|------|
+| `ping` | - | 心跳 |
+| `dm.send` | `{to, body, clientId}` | 发私聊(仅好友);收到 `dm.ack` 确认 |
+| `dm.read` | `{from}` | 标记来自某人的消息已读(对方收到 `dm.read` 回执) |
+| `presence` | `{address?}` | 在线状态上报(等价 REST presence,null=退服) |
+| `room.host` | `{roomId, status?, candidates?}` | Host 更新候选/状态(加入方收到 `room.candidates`) |
+| `room.join` | `{roomId}` | 加入方打开房间信令通道(服务端校验好友)→ 回 `room.candidates` |
+| `room.signal` | `{roomId, to, payload}` | P2P 打洞信令透传(payload 不解析,发同房间好友) |
+
+服务端 → 客户端:
+
+| type | 载荷 | 说明 |
+|------|------|------|
+| `hello` | `{user, deviceId}` | 连接确认 |
+| `pong` | - | 心跳应答 |
+| `dm.new` | `{from, fromDisplay, body, ts}` | 收到私聊 |
+| `dm.ack` | `{clientId, id, to, ts}` | 发送确认(含服务端消息 id) |
+| `dm.read` | `{by, ts}` | 对方已读回执 |
+| `presence` | `{username, online, inGame, address?}` | 在线推送;`inGame=true` 为游戏状态(上下线/换服,address=服务器),`inGame=false` 为网站在线(WS 连接) |
+| `friend.request` | `{from, fromDisplay}` | 收到好友申请实时提醒 |
+| `friend.accepted` | `{username, displayName}` | 你的申请被接受(或双方成为好友) |
+| `party.update` | `{party}` | 组队状态变更(替代 10s 轮询;party=null 表示已不在房间) |
+| `room.candidates` | `{roomId, candidates?, status?, host?}` | Host 候选 |
+| `room.signal` | `{roomId, from, payload}` | 信令透传 |
+| `error` | `{code, message, refClientId?}` | 错误 |
+
+### 10.3 私聊 REST(历史 / 离线兜底)
+
+客户端前缀 `/api/cloud/client/messages/*`(device token);网页端 `/api/messages/*`(会话)。
+
+```
+GET  /api/cloud/client/messages/{username}/?before=<id>&limit=50   历史(倒序,游标分页)
+POST /api/cloud/client/messages/{username}/   {"body": "..."}      发送(≤2000 字符,20 条/分钟)
+GET  /api/cloud/client/messages/unread/                            未读计数
+POST /api/cloud/client/messages/{username}/read/                   全部已读
+```
+
+- 仅好友可互发;被拉黑/封禁 → 403
+- 历史:仅好友解除后仍可读(数据共享过);`hasMore=true` 时以最旧一条的 `id` 作 `before` 翻页
+
+### 10.4 联机房间(P2P 打洞 + 中继,信令走 §10.2 WS)
+
+```
+POST /api/cloud/client/host/register/   {"status"?, "candidates"?}  → { roomId, roomCode, relay?, ... }
+POST /api/cloud/client/host/heartbeat/  {"status"?, "candidates"?}  每 30s 续期;断 60s 房间过期
+POST /api/cloud/client/host/close/                                  关闭房间
+POST /api/cloud/client/host/join/       {"roomCode"} 或 {"username"} → { roomId, hostUsername, status, candidates, relay? }
+```
+
+- `candidates` 为任意 JSON(打洞候选数组,由客户端定义,后端透传不解析)
+- `relay` 字段(中继兜底,部署了 ContentDB.Relay 时才有):
+  - Host 收到:`{"host": "relay.luanti.cn", "port": 21005, "ticket": "..."}` —— **ticket 仅 Host 持有**,
+    用它向中继端口发注册包 `LRCN1|{roomId}|{ticket}`(ASCII)
+  - 加入方收到:`{"host": "relay.luanti.cn", "port": 21005}`(无 ticket)——直接往该端口发 UDP 包即可
+- join 需与 Host 为好友;候选更新经 WS `room.host` → 成员收到 `room.candidates`
+- 打洞/中继连接流程与时序见 [multiplayer.md](multiplayer.md) §2

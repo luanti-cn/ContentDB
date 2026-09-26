@@ -31,19 +31,23 @@
   </ItemGroup>
 
   <!--
-    本 Web 项目位于解决方案根目录,两个类库在其子文件夹内。
+    本 Web 项目位于解决方案根目录,类库在其子文件夹内。
     需将子项目文件夹排除出 Web SDK 的默认源码/内容通配,
     否则会重复编译类库源码及其 obj 下的 AssemblyInfo(导致 CS0436/CS0579)。
   -->
   <ItemGroup>
     <Compile Remove="ContentDB.Core\**\*.cs" />
     <Compile Remove="ContentDB.Infrastructure\**\*.cs" />
+    <Compile Remove="ContentDB.Relay\**\*.cs" />
     <Content Remove="ContentDB.Core\**" />
     <Content Remove="ContentDB.Infrastructure\**" />
+    <Content Remove="ContentDB.Relay\**" />
     <EmbeddedResource Remove="ContentDB.Core\**" />
     <EmbeddedResource Remove="ContentDB.Infrastructure\**" />
+    <EmbeddedResource Remove="ContentDB.Relay\**" />
     <None Remove="ContentDB.Core\**" />
     <None Remove="ContentDB.Infrastructure\**" />
+    <None Remove="ContentDB.Relay\**" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ContentDB.Relay</RootNamespace>
+    <AssemblyName>ContentDB.Relay</AssemblyName>
+  </PropertyGroup>
+
+</Project>

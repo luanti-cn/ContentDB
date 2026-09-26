@@ -3,6 +3,7 @@ import { Boxes } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
+import { MessagesBell } from "@/components/messages-bell";
 
 const NAV = [
   { href: "/", label: "首页" },
@@ -37,6 +38,7 @@ export function SiteHeader() {
           </nav>
         </div>
         <div className="flex items-center gap-2">
+          <MessagesBell />
           <ThemeToggle />
           <UserMenu />
         </div>

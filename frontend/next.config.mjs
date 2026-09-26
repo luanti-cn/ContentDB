@@ -9,11 +9,12 @@ const nextConfig = {
     ],
   },
   async rewrites() {
-    // 开发期把 /api、/packages 代理到 C# 镜像后端,避免浏览器跨域。
+    // 开发期把 /packages 代理到 C# 镜像后端,避免浏览器跨域。
     // 生产建议由反向代理(Nginx)统一分发,或设置 NEXT_PUBLIC_API_BASE 走绝对地址。
+    // 注意:/api 认证 Cookie 经 rewrite 转发会在 Next 16 dev 下丢失,
+    // 故 /api(及 OIDC 流)统一由 src/middleware.ts 透传,不在此配置。
     const backend = process.env.BACKEND_ORIGIN || "http://localhost:5175";
     return [
-      { source: "/api/:path*", destination: `${backend}/api/:path*` },
       // 仅代理"发布文件下载/临时链接"类后端端点:releases 后必须跟数字 release id + 动作。
       // 用 author/name 两段固定 + :id 限定,避免吞掉前端页面路由
       // (如 /packages/<a>/<n>/manage/releases 这类 manage 页,其 releases 在结尾且无 id)。

@@ -3,22 +3,39 @@ import { NextRequest, NextResponse } from "next/server";
 const BACKEND_ORIGIN = process.env.BACKEND_ORIGIN ?? "https://api.luanti.cn";
 
 export const config = {
-  matcher: ["/login", "/logout", "/signin-oidc", "/signout-callback-oidc", "/oauth/:path*"],
+  matcher: [
+    "/api/:path*",
+    "/login",
+    "/logout",
+    "/signin-oidc",
+    "/signout-callback-oidc",
+    "/oauth/:path*",
+  ],
 };
 
 export async function middleware(req: NextRequest) {
   const url = new URL(req.nextUrl.pathname + req.nextUrl.search, BACKEND_ORIGIN);
 
   const headers = new Headers();
-  for (const name of ["cookie", "accept", "accept-language", "content-type", "user-agent", "referer"]) {
+  for (const name of [
+    "cookie",
+    "accept",
+    "accept-language",
+    "content-type",
+    "user-agent",
+    "referer",
+    "authorization",
+  ]) {
     const value = req.headers.get(name);
     if (value) headers.set(name, value);
   }
 
+  const hasBody = req.method !== "GET" && req.method !== "HEAD";
   const backend = await fetch(url, {
     method: req.method,
     headers,
-    body: req.method === "GET" || req.method === "HEAD" ? undefined : req.body,
+    body: hasBody ? req.body : undefined,
+    ...(hasBody ? { duplex: "half" } : {}),
     redirect: "manual",
   });
 

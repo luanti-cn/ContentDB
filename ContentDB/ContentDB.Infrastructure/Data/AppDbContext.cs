@@ -46,6 +46,7 @@ public class AppDbContext : DbContext
 	public DbSet<GameServer> GameServers => Set<GameServer>();
 	public DbSet<Party> Parties => Set<Party>();
 	public DbSet<PartyMember> PartyMembers => Set<PartyMember>();
+	public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
 
 	/// <summary>
 	/// 标准许可证种子。id=1 固定为 "Other"(与 Package.LicenseId/MediaLicenseId 默认值对齐)。
@@ -425,6 +426,19 @@ public class AppDbContext : DbContext
 			e.HasKey(x => x.Id);
 			e.HasIndex(x => new { x.PartyId, x.UserId }).IsUnique();
 			e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
+		});
+
+		// ---- 实时通讯:好友私聊 ----
+
+		b.Entity<DirectMessage>(e =>
+		{
+			e.ToTable("direct_message");
+			e.HasKey(x => x.Id);
+			e.Property(x => x.Body).HasMaxLength(2000);
+			e.HasIndex(x => new { x.RecipientId, x.ReadAt });
+			e.HasIndex(x => new { x.SenderId, x.RecipientId, x.Id });
+			e.HasOne(x => x.Sender).WithMany().HasForeignKey(x => x.SenderId).OnDelete(DeleteBehavior.Cascade);
+			e.HasOne(x => x.Recipient).WithMany().HasForeignKey(x => x.RecipientId).OnDelete(DeleteBehavior.Cascade);
 		});
 	}
 }

@@ -4,11 +4,14 @@ using ContentDB.Core.Domain;
 
 namespace ContentDB.Core.Abstractions;
 
-/// <summary>好友(含在线状态;PresenceAt 超过窗口视为离线)。</summary>
+/// <summary>
+/// 好友(含双态在线:SiteOnline = 实时连接在线(网页/客户端);Online = 游戏在线(服务器心跳,5 分钟窗口)。
+/// </summary>
 public sealed record FriendInfo(
 	string Username, string? DisplayName, string? ProfilePicUrl,
 	DateTimeOffset FriendsSince,
-	DateTimeOffset? PresenceAt, string? CurrentServerAddress)
+	DateTimeOffset? PresenceAt, string? CurrentServerAddress,
+	bool SiteOnline = false)
 {
 	public bool Online => PresenceAt is not null
 		&& PresenceAt.Value > DateTimeOffset.UtcNow - TimeSpan.FromMinutes(5);

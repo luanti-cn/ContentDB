@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { api, type FriendInfo, type FriendRequestInfo } from "@/lib/api";
+import { useRealtimeEvent, type RealtimeEvent } from "@/lib/realtime";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +18,7 @@ import {
   Ban,
   Check,
   Loader2,
+  MessageCircle,
   MoreHorizontal,
   Trash2,
   UserPlus,
@@ -25,26 +27,33 @@ import {
   X,
 } from "lucide-react";
 
-/** 在线状态副标题:在线显示所在服务器,离线显示上次在线时间。 */
-function presenceSubtitle(f: FriendInfo): string {
+/** 在线状态:双态(游戏在线 / 网站在线 / 离线)。 */
+function statusLabel(f: FriendInfo): { text: string; cls: string } {
   if (f.online) {
-    return f.currentServerAddress ? `正在 ${f.currentServerAddress}` : "在线";
+    return {
+      text: f.currentServerAddress ? `游戏在线 · ${f.currentServerAddress}` : "游戏在线",
+      cls: "text-emerald-600",
+    };
   }
+  if (f.siteOnline) return { text: "网站在线", cls: "text-sky-600" };
   if (f.presenceAt) {
     const t = new Date(f.presenceAt);
     const sameDay = new Date().toDateString() === t.toDateString();
-    return `离线 · 上次在线 ${
-      sameDay
-        ? t.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-        : t.toLocaleString("zh-CN", {
-            month: "2-digit",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-    }`;
+    return {
+      text: `离线 · 上次在线 ${
+        sameDay
+          ? t.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+          : t.toLocaleString("zh-CN", {
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+      }`,
+      cls: "text-muted-foreground",
+    };
   }
-  return "离线";
+  return { text: "离线", cls: "text-muted-foreground" };
 }
 
 export default function FriendsPage() {
@@ -83,6 +92,31 @@ export default function FriendsPage() {
     }, 30000);
     return () => clearInterval(timer);
   }, [load]);
+
+  // 实时更新:presence 事件按 inGame 分流 —— inGame=true 为游戏状态,否则为网站在线
+  useRealtimeEvent((ev: RealtimeEvent) => {
+    if (ev.type === "presence") {
+      const username = String(ev.username ?? "");
+      const online = ev.online === true;
+      const inGame = ev.inGame === true;
+      setFriends((prev) =>
+        prev?.map((f) => {
+          if (f.username !== username) return f;
+          if (inGame) {
+            return {
+              ...f,
+              online,
+              currentServerAddress: (ev.address as string | null) ?? null,
+              presenceAt: online ? new Date().toISOString() : f.presenceAt,
+            };
+          }
+          return { ...f, siteOnline: online };
+        }) ?? prev
+      );
+    } else if (ev.type === "friend.request" || ev.type === "friend.accepted") {
+      load();
+    }
+  });
 
   async function send(e: React.FormEvent) {
     e.preventDefault();
@@ -265,23 +299,34 @@ export default function FriendsPage() {
                         {f.displayName || f.username}
                       </Link>
                     </div>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {presenceSubtitle(f)}
+                    <p className={`truncate text-xs ${statusLabel(f).cls}`}>
+                      {statusLabel(f).text}
                     </p>
                   </div>
+                  <Button asChild variant="ghost" size="sm" title="发消息">
+                    <Link href={`/messages?to=${encodeURIComponent(f.username)}`}>
+                      <MessageCircle />
+                    </Link>
+                  </Button>
                   <span
                     className={`flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
                       f.online
                         ? "bg-emerald-500/10 text-emerald-600"
-                        : "bg-muted text-muted-foreground"
+                        : f.siteOnline
+                          ? "bg-sky-500/10 text-sky-600"
+                          : "bg-muted text-muted-foreground"
                     }`}
                   >
                     <span
                       className={`size-1.5 rounded-full ${
-                        f.online ? "bg-emerald-500" : "bg-muted-foreground/50"
+                        f.online
+                          ? "bg-emerald-500"
+                          : f.siteOnline
+                            ? "bg-sky-500"
+                            : "bg-muted-foreground/50"
                       }`}
                     />
-                    {f.online ? "在线" : "离线"}
+                    {f.online ? "游戏在线" : f.siteOnline ? "网站在线" : "离线"}
                   </span>
                   <DropdownMenu
                     trigger={

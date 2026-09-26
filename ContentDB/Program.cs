@@ -59,6 +59,9 @@ using (var scope = app.Services.CreateScope())
 app.UseAuthentication();
 app.UseAuthorization();
 
+// WebSocket 升级(实时通讯网关 /api/cloud/client/ws/ 在控制器内 Accept)。
+app.UseWebSockets();
+
 app.MapControllers();
 
 // 健康检查

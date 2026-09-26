@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="ContentDB.Core/ContentDB.Core.csproj" />
+  <Project Path="ContentDB.Relay/ContentDB.Relay.csproj" />
   <Project Path="ContentDB.csproj" />
   <Project Path="ContentDB.Infrastructure/ContentDB.Infrastructure.csproj" />
 </Solution>

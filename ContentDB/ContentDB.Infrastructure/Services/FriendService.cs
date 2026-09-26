@@ -12,11 +12,13 @@ public sealed class FriendService : IFriendService
 {
 	private readonly AppDbContext _db;
 	private readonly INotificationService _notifications;
+	private readonly IRealtimeHub _hub;
 
-	public FriendService(AppDbContext db, INotificationService notifications)
+	public FriendService(AppDbContext db, INotificationService notifications, IRealtimeHub hub)
 	{
 		_db = db;
 		_notifications = notifications;
+		_hub = hub;
 	}
 
 	public async Task<IReadOnlyList<FriendInfo>> ListFriendsAsync(User owner, CancellationToken ct = default)
@@ -45,7 +47,8 @@ public sealed class FriendService : IFriendService
 					friend.Username, friend.DisplayName, friend.ProfilePicUrl,
 					l.RespondedAt ?? l.CreatedAt,
 					presence.At,
-					presence.Server);
+					presence.Server,
+					SiteOnline: _hub.IsOnline(friend.Id));
 			})
 			.ToList();
 	}
@@ -98,6 +101,12 @@ public sealed class FriendService : IFriendService
 					await _notifications.NotifyAsync(
 						link.RequesterId, actor.Id, NotificationType.FRIEND_REQUEST,
 						$"{actor.Username} 接受了你的好友申请", $"/users/{actor.Username}", ct: ct);
+					await _hub.SendToUserAsync(link.RequesterId, new
+					{
+						type = "friend.accepted",
+						username = actor.Username,
+						displayName = actor.DisplayName,
+					}, ct);
 					return ServiceResult.Ok(new { success = true, accepted = true });
 			}
 		}
@@ -114,6 +123,12 @@ public sealed class FriendService : IFriendService
 		await _notifications.NotifyAsync(
 			target.Id, actor.Id, NotificationType.FRIEND_REQUEST,
 			$"{actor.Username} 请求加你为好友", "/friends", ct: ct);
+		await _hub.SendToUserAsync(target.Id, new
+		{
+			type = "friend.request",
+			from = actor.Username,
+			fromDisplay = actor.DisplayName,
+		}, ct);
 		return ServiceResult.Ok(new { success = true });
 	}
 
@@ -130,6 +145,12 @@ public sealed class FriendService : IFriendService
 		await _notifications.NotifyAsync(
 			link.RequesterId, actor.Id, NotificationType.FRIEND_REQUEST,
 			$"{actor.Username} 接受了你的好友申请", $"/users/{actor.Username}", ct: ct);
+		await _hub.SendToUserAsync(link.RequesterId, new
+		{
+			type = "friend.accepted",
+			username = actor.Username,
+			displayName = actor.DisplayName,
+		}, ct);
 		return ServiceResult.Ok(new { success = true });
 	}
 

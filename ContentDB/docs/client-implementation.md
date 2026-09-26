@@ -1,216 +1,123 @@
-# 客户端实现指南(LuantiCN)
+# 客户端实现指南(LuantiCN 引擎内)
 
-面向 LuantiCN 客户端 / 启动器开发者。API 细节见 [client-api.md](client-api.md),本文讲**怎么实现**。
+面向 LuantiCN 客户端(C++)开发者。API 细节见 [client-api.md](client-api.md),
+总体设计见 [multiplayer.md](multiplayer.md)。本文讲**怎么在引擎里实现**。
+
+原则:**全部功能直接实现在 Luanti 客户端内**(好友/私聊/组队/联机隧道),无外部 launcher。
+所有云请求必须异步执行(curl 线程 / WS 线程),严禁阻塞主循环与渲染线程。
 
 ## 0. 总体架构
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ LuantiCN Launcher(桌面程序,C# 建议)            │
-│  · 设备配对 / token 安全存储                      │
-│  · 进服凭证(取/生成/改名回写)                    │
-│  · 心跳线程、好友面板、组队面板                    │
-│  · 拉起 Luanti 客户端进程                         │
-├─────────────────────────────────────────────────┤
-│ Luanti 客户端(引擎)                             │
-│  方案 A:不改 —— 用命令行参数自动进服(推荐起步) │
-│  方案 B:小改 —— 改密回调、进服失败原因上抛        │
-├─────────────────────────────────────────────────┤
-│ 服务器端上报 mod(给服务器主装,Lua)              │
-│  · 每 60s 向 luanti.cn 上报在线人数               │
-└─────────────────────────────────────────────────┘
+│ LuantiCN 客户端(C++ 引擎,LuantiCN 分叉)          │
+│  ├─ src/cloud/  新增云服务模块                     │
+│  │   · CloudConfig      device token / 后端地址   │
+│  │   · CloudHttpClient   REST 封装(curl,Bearer)   │
+│  │   · RealtimeClient    WebSocket 长连接          │
+│  │   · StunClient        公网端点观测              │
+│  │   · TunnelManager     打洞/中继/UDP 转发        │
+│  │   · HostRoomController 开服房间注册/心跳         │
+│  │   · JoinController    加入好友房间              │
+│  ├─ 主菜单:好友 / 私聊 / 组队 三页签                │
+│  ├─ 游戏内:私聊 toast + 聊天窗(HUD)              │
+│  └─ 既有网络层(src/network/)协议不变              │
+└───────────────────────┬─────────────────────────┘
+                        │ HTTPS / WSS / UDP(隧道)
+                        ▼
+        后端(ASP.NET Core)+ Relay(UDP 中继)
 ```
 
-**关键事实:Luanti 引擎支持命令行直接进服**,所以第一阶段 launcher 完全不用改引擎:
+## 1. 认证:设备配对
 
-```sh
-luanti --address play.example.com --port 30000 --name Steve --password "xxx" --go
+- 主菜单首次使用引导:打开网页「云同步 → 设备」生成配对码 → 在主菜单输入 8 位短码。
+- `POST /api/cloud/client/pair/ {code, device_name}` → `deviceToken`(64 字符,仅此一次)。
+- token 存入用户配置(`cloud.device_token`);文件权限按用户私有;
+  泄露可在网页「设备管理」一键吊销。后续可升级 DPAPI/Keychain。
+- 启动时 `GET /api/cloud/client/me/` 校验;401 → 清除 token 引导重新配对。
+
+## 2. CloudHttpClient(REST 封装)
+
+- 复用引擎内嵌 curl(`HTTPFetch` 同栈),统一加 `Authorization: Bearer <device_token>`。
+- 统一错误处理:`{success:false, error}` → UI 提示;401 触发重新配对;429 提示稍后再试。
+- 所有调用进线程池,回调贴回主线程再动 UI(与 `HTTPFetch` 完成回调模型一致)。
+
+## 3. RealtimeClient(WebSocket 长连接)
+
+- 端点:`wss://luanti.cn/api/cloud/client/ws/`,`Authorization: Bearer` 头认证。
+- 实现:curl WebSocket API(`CURLOPT_CONNECT_ONLY=2`,curl ≥ 7.86;LuantiCN 需捆绑
+  满足版本的 curl);不支持时降级为 30s REST 轮询(好友列表 + 未读数)。
+- 收发循环独立线程;主线程通过无锁队列消费事件(UI 更新、toast、信令投递 TunnelManager)。
+- 心跳:30s `{"type":"ping"}`;断线指数退避重连(1s/2s/4s…上限 60s);重连后重新 `room.host`/`room.join`。
+- 事件分发给订阅者:`ChatPanel`(dm.new/dm.ack/dm.read)、`FriendsPanel`(presence)、
+  `PartyPanel`(party.update)、`TunnelManager`(room.candidates/room.signal)。
+
+## 4. 进服凭证(引擎内化既有流程)
+
+```
+进服(普通服务器):
+1. POST /api/cloud/client/vault/provision/ {address, characterId?}
+   → {username, password, created}
+2. 用凭证连服(引擎内直接走既有连接流程,无需命令行)
+3. 用户名被占 → 弹窗改名 → PUT /vault/ 回写 → 重试
+4. 密码被改 → POST /vault/invalid/ → 提示输入/改名 → 回写 → 重试
 ```
 
-新用户名首次连接即注册(服务器默认允许),密码就是注册密码 —— 这正是云端配给流程的落地点。
+## 5. 联机隧道(TunnelManager)
 
-## 1. Launcher 项目结构建议(C#)
+### 5.1 Host 流程(开本地游戏)
 
 ```
-LuantiCN.Launcher/
-├─ Api/CloudApi.cs        // HTTP 封装(全部 /api/cloud/client/*)
-├─ Pairing/PairService.cs // luanticn:// 深链 + 配对
-├─ Vault/JoinFlow.cs      // 进服状态机(核心)
-├─ Presence/Heartbeat.cs  // 心跳线程
-├─ Social/FriendsPanel.cs // 好友(30s 轮询)
-├─ Social/PartyPanel.cs   // 组队(10s 轮询)
-├─ Secure/TokenStore.cs   // DPAPI 存 token
-└─ Process/ClientRunner.cs// 拉起/监听 luanti 进程
+主菜单 "Host Game" / 启动本地服:
+1. POST /host/register/ {status:"hosting", candidates:[stun…, local…]}
+   → {roomId, roomCode, relay:{host,port,ticket}}
+2. 向 relay:port 发注册包 "LRCN1|{roomId}|{ticket}"(ASCII),每 10s keepalive
+3. WS room.host 持续上报候选;REST /host/heartbeat/ 每 30s 续期
+4. 收到 room.signal(加入方打洞参数)→ TunnelManager 应答/配合打洞
+5. 隧道数据到达 → 转发给 127.0.0.1:30000(本地服),回程对称
+退服/关服:POST /host/close/(尽力而为;房间也会因超时自动过期)
 ```
 
-### CloudApi 骨架
+### 5.2 Join 流程(加入好友)
 
-```csharp
-public class CloudApi
-{
-    private readonly HttpClient _http = new() { BaseAddress = new Uri("https://luanti.cn") };
-    private string? _deviceToken;
-
-    public void SetToken(string token) => _deviceToken = token;
-
-    private async Task<JsonNode?> SendAsync(HttpMethod m, string path, object? body = null)
-    {
-        using var req = new HttpRequestMessage(m, path);
-        if (_deviceToken is not null)
-            req.Headers.Authorization = new("Bearer", _deviceToken);
-        if (body is not null)
-            req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        using var res = await _http.SendAsync(req);
-        var json = JsonNode.Parse(await res.Content.ReadAsStringAsync());
-        if (!res.IsSuccessStatusCode)
-            throw new CloudApiException((int)res.StatusCode, json?["error"]?.GetValue<string>() ?? res.StatusCode.ToString());
-        return json;
-    }
-
-    public Task<JsonNode?> PairAsync(string code, string deviceName) =>
-        SendAsync(HttpMethod.Post, "/api/cloud/client/pair/", new { code, deviceName });
-
-    public Task<JsonNode?> ProvisionAsync(string address, int? characterId) =>
-        SendAsync(HttpMethod.Post, "/api/cloud/client/vault/provision/", new { address, characterId });
-
-    public Task<JsonNode?> WritebackAsync(string address, string username, string password) =>
-        SendAsync(HttpMethod.Put, "/api/cloud/client/vault/", new { address, username, password });
-
-    public Task ReportInvalidAsync(string address) =>
-        SendAsync(HttpMethod.Post, "/api/cloud/client/vault/invalid/", new { address });
-
-    public Task NewPasswordAsync(int? length = null) => ...;   // GET /api/cloud/client/new-password/
-    public Task<JsonNode?> FriendsAsync() => SendAsync(HttpMethod.Get, "/api/cloud/client/friends/");
-    public Task HeartbeatAsync(string? address) => SendAsync(HttpMethod.Post, "/api/cloud/client/presence/", new { address });
-    public Task<JsonNode?> PartyAsync() => SendAsync(HttpMethod.Get, "/api/cloud/client/party/");
-    // party create/join/leave/end/server/kick 同理
-}
+```
+好友面板「加入」(或输入房间码):
+1. POST /host/join/ {username} 或 {roomCode}
+   → {roomId, hostUsername, status, candidates, relay:{host,port}}   // 无 ticket
+2. provision 进服凭证(§4,目标地址填 127.0.0.1 回环代理)
+3. TunnelManager 起本地 UDP 回环代理(127.0.0.1:随机端口)
+4. WS room.join 打开信令通道;与 Host 经 room.signal 交换打洞参数
+5. 同步打洞(5-10s):成功 → P2P;失败(2 轮)→ 走中继
+6. 引擎连接 127.0.0.1:随机端口 → 玩(后续全部透明)
+断线:15s 无包 → 重打洞/切中继;房间消失 → 提示「好友已下线」
 ```
 
-## 2. 配对流程
+### 5.3 回环代理(单线程事件循环)
 
-### 2.1 注册 luanticn:// 协议(Windows)
+- 本地 socket(127.0.0.1:P)↔ 隧道 socket 的双向搬运;连接建立前先缓存首包(Luanti 握手)。
+- 打洞窗口内双方向对方候选同步发包;`CONNECTED` 后只对单一对端收发。
+- 中继模式下首包前先发注册包仅 Host 需要;Guest 直接发包即被中继记录。
 
-```csharp
-// 首次运行时写入(HKCU 不需要管理员)
-using var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\luanticn");
-key.SetValue("URL Protocol", "");
-using var cmd = key.CreateSubKey(@"shell\open\command");
-cmd.SetValue("", $"\"{exePath}\" \"%1\"");
-```
+### 5.4 打洞细节
 
-浏览器扫码/点深链 → 系统拉起 launcher,`args[0]` 形如 `luanticn://login?code=ABCD-EF23`,
-用 `Uri` 解析出 `code`:
+- STUN(RFC 5389 仅 Binding):20 字节头 + MAGIC_COOKIE,解析 XOR-MAPPED-ADDRESS;
+  向 2-3 个公共 STUN 发请求取多候选。
+- 双方在信令确认后的同一秒窗口内互发探测包(各 5-8 个,间隔 100ms)以留足 NAT 映射。
+- 对称 NAT(候选互相收不到)→ 直接切中继,不再重试。
 
-```csharp
-var code = new Uri(args[0]).Query.Replace("?code=", "");
-var res = await api.PairAsync(code, Environment.MachineName); // 一次性,10 分钟有效
-TokenStore.Save((string)res["deviceToken"]);                  // 明文仅此一次!
-```
+## 6. 好友 / 私聊 / 组队 UI
 
-### 2.2 Token 安全存储(DPAPI)
+- 主菜单三页签:
+  - 好友:`GET /cloud/client/friends/` 初始 + WS presence 增量;在线者显示「私聊」「加入」「组队」。
+  - 私聊:会话列表(未读数 `GET /messages/unread/`)+ 聊天窗(历史 `GET /messages/{u}/`
+    游标翻页;发送走 WS `dm.send`,`dm.ack` 确认;`dm.new` toast + 未读红点)。
+  - 组队:建房/凭码加入;`party.update` 推送驱动;队长切服时成员弹「跟随」提示。
+- 游戏内:私聊 toast(右下角)+ 快捷打开聊天窗;聊天窗内 `/msg 好友名 内容` 也走云端私聊。
 
-```csharp
-public static class TokenStore
-{
-    private static readonly string Path = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LuantiCN", "device.bin");
+## 7. 服务器端上报 mod(不变)
 
-    public static void Save(string token)
-    {
-        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
-        File.WriteAllBytes(Path, ProtectedData.Protect(Encoding.UTF8.GetBytes(token), null, DataProtectionScope.CurrentUser));
-    }
-    public static string? Load() => ...;   // 对应 Unprotect
-}
-```
-
-启动时 `Load()` → `api.SetToken(...)` → `GET /api/cloud/client/me/` 校验;401 则引导重新配对。
-
-## 3. 进服状态机(核心)
-
-```csharp
-public async Task JoinServerAsync(string address, int? characterId)
-{
-    // 1. 配给凭证(重复进同一服返回相同凭证;新服按角色策略生成)
-    var cred = await api.ProvisionAsync(address, characterId);
-    string username = (string)cred["username"];
-    string password = (string)cred["password"];
-
-    // 2. 拉起客户端
-    var result = await ClientRunner.RunAsync(new {
-        Exe = "luanti",
-        Args = $"--address {host(address)} --port {port(address)} --name {username} --password {password} --go"
-    });
-
-    // 3. 失败分流(读退出输出 / debug.txt)
-    if (result.FailedWith("Wrong password") || result.FailedWith("name"))   // 名字已被占/密码不符
-    {
-        var newName = PromptRename(defaultSuggestion: username);   // 弹窗让用户改名
-        await api.WritebackAsync(address, newName, password);      // 回写云端
-        await JoinServerAsync(address, characterId);               // 用新名字重试
-        return;
-    }
-
-    // 4. 登录成功 → 心跳线程接管(见 §4);退出后上报 null
-    await api.HeartbeatAsync(address);
-    await WaitForExitAsync(result);
-    await api.HeartbeatAsync(null);
-}
-```
-
-**密码在别处被改**(原版客户端/另一台电脑)时,连接会报 `Wrong password` 但用户其实是老用户 ——
-与"名字被占"不易区分时,统一处理:提示用户输入正确密码(或改名)→ `POST /vault/invalid/` 上报失效 →
-`PUT /vault/` 回写 → 重试。两端语义云端都已支持,客户端只需按提示走。
-
-## 4. 心跳线程
-
-```csharp
-public class Heartbeat : IDisposable
-{
-    private Timer? _timer;
-    private readonly CloudApi _api;
-    private string? _current;
-
-    public void Start(string address)
-    {
-        _current = address;
-        _timer = new Timer(async _ => {
-            try { await _api.HeartbeatAsync(_current); } catch { /* 网络抖动忽略,下轮重试 */ }
-        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(60));
-    }
-
-    public async Task StopAsync()
-    {
-        _timer?.Dispose();
-        try { await _api.HeartbeatAsync(null); } catch { }   // 退服上报,尽力而为
-    }
-}
-```
-
-节奏:**进服立即一次 + 每 60 秒一次 + 退服 null 一次**。停发超 5 分钟好友侧自动显示离线。
-
-## 5. 好友 / 组队面板
-
-- 好友:30 秒轮询 `GET /api/cloud/client/friends/`,列表含 `online` / `currentServerAddress`;
-  「加入」按钮 = 复用 §3 的 `JoinServerAsync(friend.currentServerAddress)`。
-- 组队:在房间时 10 秒轮询 `GET /api/cloud/client/party/`;
-  `party.serverAddress` 变化且 ≠ 当前所在服 → 弹提示「队长切换了服务器,是否跟随」→ 加入;
-  没在任何服时直接跟随目标服。
-
-## 6. 游戏内改密的同步
-
-改密对话框在引擎里,新密码引擎最先知道。三种方案按成本排序:
-
-| 方案 | 改动 | 说明 |
-|------|------|------|
-| A. 本地文件接力(推荐) | 引擎 ~10 行 | 改密提交后把 `{address, username, password}` 写入 `<worlddir>/../luanticn_pw.json`;launcher 文件监视 → `PUT /vault/` → 删除文件 |
-| B. 引擎直连云端 | 引擎较多 | 引擎把 device token 存进配置,改密后直接 POST;需在引擎里做 HTTP |
-| C. 不做同步 | 无 | 靠"登录失败 → `POST /vault/invalid/` → 提示重输 → 回写"兜底,体验稍差但零改动 |
-
-## 7. 服务器端上报 mod(完整示例)
-
-服务器主安装 `luanticn_report` mod,`minetest.conf` 里两行配置 + 授权 HTTP:
+服务器主安装 `luanticn_report` mod 上报在线状态,详见旧文档或 docs/multiplayer.md §2.5。
+示例(`minetest.conf` 两行 + 每 60s HTTP 上报)保持不变:
 
 ```ini
 secure.http_mods = luanticn_report
@@ -218,64 +125,24 @@ luanticn_report.token = ABCDEFGH23456789ABCDEFGH23456789
 luanticn_report.address = play.example.com:30000
 ```
 
-```lua
--- luanticn_report/init.lua
-local http = minetest.request_http_api()
-local token = minetest.settings:get("luanticn_report.token")
-local address = minetest.settings:get("luanticn_report.address")
-local endpoint = "https://luanti.cn/api/servers/report/"
-
-if not (http and token and address) then
-    minetest.log("warning", "[luanticn_report] 缺少 http 授权或配置,未启用上报")
-    return
-end
-
-local function report()
-    local payload = minetest.write_json({
-        address = address,
-        token = token,
-        players_online = #minetest.get_connected_players(),
-        players_max = 60,  -- 可按需读取设置
-        motd = "",         -- 可选
-    })
-    http.fetch({
-        url = endpoint,
-        method = "POST",
-        data = payload,
-        extra_headers = { "Content-Type: application/json" },
-        timeout = 10,
-    }, function() end)  -- 上报失败静默,下轮重试
-end
-
-local timer = 0
-minetest.register_globalstep(function(dtime)
-    timer = timer + dtime
-    if timer >= 60 then
-        timer = 0
-        report()
-    end
-end)
-
-report()  -- 启动即报一次
-```
-
-10 分钟没有上报,服务器在大厅自动显示为离线。
-
-## 8. 轮询 / 节奏速查
+## 8. 节奏速查
 
 | 事项 | 时机 / 频率 |
 |------|-------------|
-| 心跳 presence | 进服立即 + 每 60s + 退服 null |
-| 服务器上报 | 每 60s(服务端 mod) |
-| 好友列表 | 30s |
-| 组队状态 | 10s(在房间时) |
+| WS 心跳 ping | 30s |
+| WS 断线重连 | 指数退避,上限 60s |
+| presence | 进服立即 + 每 60s + 退服 null(可全走 WS `presence`) |
+| 服务器上报(服务端 mod) | 每 60s |
+| Host 房间心跳 | REST 30s / 中继注册 keepalive 10s |
+| 打洞窗口 | 5-10s;失败重试 ≤ 2 轮后切中继 |
+| 隧道保活 | 10s 心跳;15s 判死重连 |
 | 配对码 | 10 分钟有效,一次性 |
-| Token 校验 | 启动时 `GET /client/me/`,401 → 重新配对 |
 
 ## 9. 安全清单
 
-- [ ] device token 用 DPAPI/Keychain 加密存储,不进配置文件明文、不进 git
-- [ ] 配对码一次性,配对失败(410)提示用户重新生成而不是重试
-- [ ] `--password` 命令行会出现在进程列表里,介意可改用引擎补丁从 stdin/环境变量读(方案 B)
-- [ ] 服务器上报 token 泄露时在网页「重新生成」立即作废旧 token
-- [ ] 心跳/轮询失败一律静默重试,不要弹窗轰炸;退服上报尽力而为
+- [ ] device token 文件权限按用户私有;不进 git;提供「退出登录」清除入口
+- [ ] 401 一律引导重新配对,不重试;配对码 410 提示重新生成
+- [ ] 云请求全部异步,失败静默重试(节流),不弹窗轰炸
+- [ ] 打洞/中继仅对好友开放(后端已强制);信令 payload 长度限制(如 4KB)
+- [ ] 私聊内容本地不落盘(或加密),云端见 server 端策略
+- [ ] 中继票据(ticket)仅存内存,不写日志不上报
