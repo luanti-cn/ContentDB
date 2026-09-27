@@ -235,9 +235,11 @@ public sealed class RelayServer : IDisposable
 				var ticket = Encoding.ASCII.GetString(buffer, registrationPrefix.Length, len - registrationPrefix.Length);
 				if (FixedTimeEquals(ticket, session.Ticket))
 				{
+					var changed = !SameEndpoint(remote, session.HostEndpoint);
 					session.HostEndpoint = remote;
 					session.TouchHost();
-					_logger.LogInformation("房间 {RoomId} Host 注册 {Ep}", session.RoomId, remote);
+					if (changed)
+						_logger.LogInformation("房间 {RoomId} Host 注册 {Ep}", session.RoomId, remote);
 				}
 				continue;
 			}

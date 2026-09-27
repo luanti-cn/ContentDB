@@ -137,6 +137,11 @@ public static class DependencyInjection
 			if (!string.IsNullOrEmpty(relayOptions.BaseUrl))
 				client.BaseAddress = new Uri(relayOptions.BaseUrl);
 			client.Timeout = TimeSpan.FromSeconds(5);
+		})
+		// 中继走内网/本机回环,禁用系统代理(避免 Clash 等接管导致超时)
+		.ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.HttpClientHandler
+		{
+			UseProxy = false,
 		});
 
 		return services;

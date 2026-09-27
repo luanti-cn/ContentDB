@@ -193,6 +193,8 @@ ContentDB/*/bin_ci3 2Debug
 # LuantiCN 本地配置与凭据(不进仓库)
 ContentDB/appsettings.Development.json
 ContentDB/appsettings.Production.json
+deploy/appsettings.Production.json
+deploy/.env
 frontend/.env*.local
 *.pem
 !deploy_key.pub

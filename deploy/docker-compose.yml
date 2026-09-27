@@ -31,6 +31,12 @@ services:
       db:
         condition: service_healthy
     env_file: .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+    volumes:
+      - ./appsettings.Production.json:/app/appsettings.Production.json:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # 只暴露给宿主机回环,对外由 Nginx 反代
       - "0.0.0.0:8080:8080"
