@@ -38,6 +38,8 @@ Luanti 客户端(国内)
 | `ContentDB.Core` | `IObjectStorage` / `IUpstreamClient` / `IMetadataCacheService` / `IFileMirrorService` 抽象、`MirrorOptions` / `StorageOptions` 配置、`UrlRewriter` |
 | `ContentDB.Infrastructure` | EF `MirrorDbContext`、`S3ObjectStorage`、`UpstreamClient`(Polly)、`MetadataCacheService`、`FileMirrorService`、DI 注册 |
 
+缓存生命周期、回归测试与后续架构规划见 [架构说明](docs/architecture.md)。
+
 ## 配置(appsettings.json)
 
 ```jsonc
