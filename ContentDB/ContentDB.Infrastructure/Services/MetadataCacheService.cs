@@ -78,7 +78,31 @@ public sealed class MetadataCacheService(
 			return StaleOrUnavailable(cached);
 		}
 		ct.ThrowIfCancellationRequested();
-		if (response.StatusCode >= 500 && option…311 tokens truncated…t}
+		if (response.StatusCode >= 500 && options.Value.ServeStaleOnUpstreamError && cached is not null)
+			return new CachedApiResult(cached.StatusCode, cached.Body, cached.ContentType);
+
+		var body = rewriteUrls
+			? new UrlRewriter(source.BaseUrl, options.Value.PublicBaseUrl).Rewrite(response.Body)
+			: response.Body;
+		var result = new CachedApiResult(response.StatusCode, body, response.ContentType ?? "application/json");
+		// TTL begins after the fetch, not before waiting for a lock or a slow upstream.
+		var fetchedAt = clock.GetUtcNow();
+		var expiresAt = fetchedAt.AddSeconds(ttlSeconds);
+		if (response.StatusCode == 200 && ttlSeconds > 0)
+		{
+			if (cacheDbAvailable)
+			{
+				try
+				{
+					await UpsertAsync(key, result, fetchedAt, expiresAt, ct);
+				}
+				catch (Exception ex) when (!ct.IsCancellationRequested)
+				{
+					// Failed tracked writes must not leak into later SaveChanges calls.
+					foreach (var entry in db.ChangeTracker.Entries<CachedResponse>().Where(x => x.Entity.CacheKey == key).ToList())
+						entry.State = EntityState.Detached;
+					logger.LogWarning(ex, "Metadata cache write failed [{Source}]: {Path}", source.Id, relativePathAndQuery);
+				}
 			}
 			// L1 remains useful even when the persistent cache is unavailable.
 			hotCache.Remember(key, result, expiresAt);
