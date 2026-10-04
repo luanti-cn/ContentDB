@@ -12,7 +12,7 @@ using Microsoft.Extensions.Options;
 
 // 多源文件镜像:记录键与对象 key 均按 source 分区,避免多个上游站点文件名冲突。
 
-using System.Collections.Concurrent;
+using ContentDB.Infrastructure.Caching;
 
 namespace ContentDB.Infrastructure.Services;
 
@@ -26,9 +26,9 @@ public sealed class FileMirrorService : IFileMirrorService
 	private readonly IServiceScopeFactory _scopeFactory;
 	private readonly ILogger<FileMirrorService> _logger;
 
-	// single-flight:同一文件的并发请求只放一个去回源,其余等锁后直接读已落地对象,
-	// 避免热门包首次被访问时触发 N 份并发跨境下载。
-	private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new();
+	// 进程内按键互斥;持有者和等待者退出后回收锁条目。
+	// 异步上传仍可能在锁释放后进行,完整下载合并需要后续的托管上传队列。
+	private readonly KeyedAsyncLock _gates;
 
 	public FileMirrorService(
 		MirrorDbContext db,
@@ -37,7 +37,8 @@ public sealed class FileMirrorService : IFileMirrorService
 		IOptions<MirrorOptions> options,
 		IOptions<StorageOptions> storageOptions,
 		IServiceScopeFactory scopeFactory,
-		ILogger<FileMirrorService> logger)
+		ILogger<FileMirrorService> logger,
+		KeyedAsyncLock gates)
 	{
 		_db = db;
 		_upstream = upstream;
@@ -46,13 +47,11 @@ public sealed class FileMirrorService : IFileMirrorService
 		_storageOptions = storageOptions.Value;
 		_scopeFactory = scopeFactory;
 		_logger = logger;
+		_gates = gates;
 	}
 
 	/// <summary>记录键按 source 分区:[sourceId]path。</summary>
 	private static string RecordKey(string sourceId, string upstreamPath) => $"[{sourceId}]{upstreamPath}";
-
-	private static SemaphoreSlim Gate(string recordKey)
-		=> Gates.GetOrAdd(recordKey, _ => new SemaphoreSlim(1, 1));
 
 	public async Task<FileResolveResult> EnsureAndResolveAsync(
 		UpstreamSiteOptions source,
@@ -61,16 +60,8 @@ public sealed class FileMirrorService : IFileMirrorService
 		CancellationToken ct = default)
 	{
 		var recordKey = RecordKey(source.Id, upstreamPath);
-		var gate = Gate(recordKey);
-		await gate.WaitAsync(ct);
-		try
-		{
-			return await EnsureAndResolveCoreAsync(source, upstreamPath, recordKey, userAgent, ct);
-		}
-		finally
-		{
-			gate.Release();
-		}
+		using var lease = await _gates.AcquireAsync("file:" + recordKey, ct);
+		return await EnsureAndResolveCoreAsync(source, upstreamPath, recordKey, userAgent, ct);
 	}
 
 	private async Task<FileResolveResult> EnsureAndResolveCoreAsync(
@@ -138,16 +129,8 @@ public sealed class FileMirrorService : IFileMirrorService
 		CancellationToken ct = default)
 	{
 		var recordKey = RecordKey(source.Id, upstreamPath);
-		var gate = Gate(recordKey);
-		await gate.WaitAsync(ct);
-		try
-		{
-			return await EnsureStoredAndGetKeyCoreAsync(source, upstreamPath, recordKey, userAgent, ct);
-		}
-		finally
-		{
-			gate.Release();
-		}
+		using var lease = await _gates.AcquireAsync("file:" + recordKey, ct);
+		return await EnsureStoredAndGetKeyCoreAsync(source, upstreamPath, recordKey, userAgent, ct);
 	}
 
 	private async Task<string?> EnsureStoredAndGetKeyCoreAsync(

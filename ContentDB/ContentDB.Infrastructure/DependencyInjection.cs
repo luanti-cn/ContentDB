@@ -6,6 +6,8 @@ using Amazon.S3;
 using ContentDB.Core.Abstractions;
 using ContentDB.Core.Configuration;
 using ContentDB.Infrastructure.Data;
+using ContentDB.Infrastructure.Caching;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using ContentDB.Infrastructure.Realtime;
 using ContentDB.Infrastructure.Services;
 using ContentDB.Infrastructure.Storage;
@@ -89,6 +91,11 @@ public static class DependencyInjection
 
 		// 多源解析器
 		services.AddSingleton<ISourceResolver, SourceResolver>();
+
+		// Host-owned cache/concurrency state; scoped services retain their own DbContexts.
+		services.TryAddSingleton<TimeProvider>(TimeProvider.System);
+		services.AddSingleton<KeyedAsyncLock>();
+		services.AddSingleton(sp => new MetadataResponseCache(sp.GetRequiredService<TimeProvider>()));
 
 		// 核心服务
 		services.AddScoped<IMetadataCacheService, MetadataCacheService>();

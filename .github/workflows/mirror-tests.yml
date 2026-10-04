@@ -1,0 +1,16 @@
+name: C# mirror tests
+on:
+  push:
+    paths: ['ContentDB/**', 'tests/**', '.github/workflows/mirror-tests.yml']
+  pull_request:
+    paths: ['ContentDB/**', 'tests/**', '.github/workflows/mirror-tests.yml']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build ContentDB/ContentDB.csproj --configuration Release
+      - run: dotnet test tests/ContentDB.Infrastructure.Tests --configuration Release
